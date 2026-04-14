@@ -9,6 +9,7 @@ import com.google.api.client.auth.oauth2.BearerToken;
 import com.google.api.client.auth.oauth2.Credential;
 import com.google.api.client.googleapis.auth.oauth2.GoogleAuthorizationCodeFlow;
 import com.google.api.client.googleapis.auth.oauth2.GoogleAuthorizationCodeRequestUrl;
+import com.google.api.client.googleapis.auth.oauth2.GoogleRefreshTokenRequest;
 import com.google.api.client.googleapis.auth.oauth2.GoogleTokenResponse;
 import com.google.api.client.googleapis.auth.oauth2.GoogleIdToken;
 import com.google.api.client.http.GenericUrl;
@@ -155,7 +156,9 @@ public class OAuthService {
                     .orElse(OAuthToken.builder().artistId(artist.getId()).build());
 
             token.setAccessToken(response.getAccessToken());
-            token.setRefreshToken(response.getRefreshToken());
+            if (response.getRefreshToken() != null && !response.getRefreshToken().isBlank()) {
+                token.setRefreshToken(response.getRefreshToken());
+            }
             token.setTokenType(response.getTokenType());
             token.setIssuedAt(LocalDateTime.now());
             token.setExpiresAt(LocalDateTime.now().plusSeconds(response.getExpiresInSeconds()));
@@ -277,14 +280,16 @@ public class OAuthService {
      * @return Updated token with new access token
      */
     private OAuthToken refreshToken(OAuthToken token) throws IOException {
-        if (token.getRefreshToken() == null) {
+        if (token.getRefreshToken() == null || token.getRefreshToken().isBlank()) {
             throw new IllegalStateException("No refresh token available");
         }
 
-        GoogleAuthorizationCodeFlow flow = createFlow();
-        GoogleTokenResponse response = flow
-                .newTokenRequest(token.getRefreshToken())
-                .setGrantType("refresh_token")
+        GoogleTokenResponse response = new GoogleRefreshTokenRequest(
+                httpTransport,
+                jsonFactory,
+                token.getRefreshToken(),
+                clientId,
+                clientSecret)
                 .execute();
 
         // Update token

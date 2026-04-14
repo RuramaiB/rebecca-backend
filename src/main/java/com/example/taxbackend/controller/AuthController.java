@@ -88,11 +88,15 @@ public class AuthController {
                     authResult.getArtist().getName(),
                     authResult.getArtist().getId());
             if (authResult.getToken() != null) {
-                response.sendRedirect("http://localhost:3000/auth/login?token=" + authResult.getToken() + "&role=" +authResult.getArtist().getRole());
+                String safeRedirect = String.format(
+                        "http://localhost:3000/auth/login?artistId=%s&role=%s&auth=success",
+                        authResult.getArtist().getId(),
+                        authResult.getArtist().getRole()
+                );
+                response.sendRedirect(safeRedirect);
                 return ResponseEntity.ok(
                         OAuthService.AuthResult
                                 .builder()
-                                .token(authResult.getToken())
                                 .redirectUrl("http://localhost:3000/admin/")
                                 .message(authResult.getMessage())
                                 .artist(authResult.getArtist())

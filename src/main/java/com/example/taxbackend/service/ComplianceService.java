@@ -162,6 +162,7 @@ public class ComplianceService {
                                                 .collect(Collectors.toList());
 
                 return ComplianceReportDTO.builder()
+                                .complianceStatusId(status.getId())
                                 .artistId(artistId)
                                 .artistName(artist.getName())
                                 .email(artist.getEmail())

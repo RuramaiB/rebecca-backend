@@ -72,6 +72,7 @@ public interface TaxRecordRepository extends MongoRepository<TaxRecord, String> 
 
     // Delete by artist (for cleanup)
     void deleteByArtistId(String artistId);
+    void deleteByArtistIdAndPeriod(String artistId, String period);
 
     List<TaxRecord> findByArtistIdAndTaxTypeOrderByPeriodStartDesc(String artistId, TaxRecord.TaxType taxType);
 

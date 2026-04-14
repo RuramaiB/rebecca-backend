@@ -11,6 +11,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.time.YearMonth;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Optional;
 
@@ -35,9 +36,11 @@ public class TaxService {
     // Default tax configuration (Zimbabwe Digital Services Tax)
     private static final double DEFAULT_TAX_RATE = 0.10; // 10%
     private static final double DEFAULT_OPERATION_TAX_RATE = 0.03; // 3% for accounts with videos but low revenue
+    private static final double MONTHLY_CONTENT_ACCRUAL = 0.20; // $0.20 per active upload per month
     private static final double THRESHOLD_AMOUNT = 100.0; // Minimum $100 revenue for standard tax
     private static final double OPERATION_TAX_THRESHOLD = 1.0; // Minimum $1 revenue for operation tax
     private static final int PAYMENT_DUE_DAYS = 30; // 30 days after period end
+    private static final DateTimeFormatter PERIOD_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM");
 
     /**
      * Calculate tax for specific artist and period
@@ -73,11 +76,10 @@ public class TaxService {
         if (revenues.isEmpty()) {
             log.warn("No revenue data found for artist {} period {}", artistId, period);
 
-            // Check if artist has videos in this period for operation tax
-            boolean hasVideosInPeriod = hasVideosInPeriod(artistId, periodStart, periodEnd);
-
-            if (hasVideosInPeriod) {
-                log.info("Artist {} has videos but no revenue in period {}, applying operation tax", artistId, period);
+            boolean hasActiveContent = hasActiveContentByPeriod(artistId, periodEnd);
+            if (hasActiveContent) {
+                log.info("Artist {} has active content but no revenue in period {}, applying content accrual tax",
+                        artistId, period);
                 return applyOperationTax(artistId, period, 0.0, periodStart, periodEnd, config);
             }
 
@@ -104,13 +106,12 @@ public class TaxService {
                 .mapToDouble(r -> r.getAdRevenue() != null ? r.getAdRevenue() : 0.0)
                 .sum();
 
-        // Check if artist has videos in this period
-        boolean hasVideosInPeriod = hasVideosInPeriod(artistId, periodStart, periodEnd);
+        boolean hasActiveContent = hasActiveContentByPeriod(artistId, periodEnd);
 
         // Apply operation tax for accounts with videos but revenue below operation tax
         // threshold
-        if (hasVideosInPeriod && grossRevenue < config.getOperationTaxThreshold()) {
-            log.info("Artist {} has videos but revenue ${} below operation tax threshold ${}, applying operation tax",
+        if (hasActiveContent && grossRevenue < config.getOperationTaxThreshold()) {
+            log.info("Artist {} has active content but revenue ${} below operation tax threshold ${}, applying content accrual tax",
                     artistId, grossRevenue, config.getOperationTaxThreshold());
             return applyOperationTax(artistId, period, grossRevenue, periodStart, periodEnd, config);
         }
@@ -133,7 +134,10 @@ public class TaxService {
         // Calculate standard tax
         double deductions = calculateDeductions(grossRevenue, config);
         double taxableIncome = grossRevenue - deductions;
-        double taxAmount = taxableIncome * config.getStandardRate();
+        double revenueTaxAmount = taxableIncome * config.getStandardRate();
+        long activeContentCount = getActiveContentCountByPeriod(artistId, periodEnd);
+        double contentAccrualAmount = activeContentCount * MONTHLY_CONTENT_ACCRUAL;
+        double taxAmount = revenueTaxAmount + contentAccrualAmount;
         double netRevenue = grossRevenue - taxAmount;
 
         // Count videos and shots in period
@@ -166,10 +170,14 @@ public class TaxService {
                 .paymentStatus(TaxRecord.PaymentStatus.PENDING)
                 .dueDate(periodEnd.plusDays(config.getPaymentDueDays()))
                 .filed(false)
+                .notes(String.format(
+                        "Revenue tax: $%.2f + content accrual: $%.2f (%d active uploads x $%.2f/month)",
+                        revenueTaxAmount, contentAccrualAmount, activeContentCount, MONTHLY_CONTENT_ACCRUAL))
                 .build();
 
         record = taxRecordRepository.save(record);
-        log.info("Standard tax calculated: ${} on revenue ${}", taxAmount, grossRevenue);
+        log.info("Standard tax calculated: ${} (revenue tax ${} + accrual ${}) on revenue ${}",
+                taxAmount, revenueTaxAmount, contentAccrualAmount, grossRevenue);
 
         // Update compliance status
         updateComplianceStatus(artistId);
@@ -208,12 +216,13 @@ public class TaxService {
         }
 
         YearMonth yearMonth = YearMonth.parse(period);
-        double operationTaxRate = config.getOperationTaxRate() != null
-                ? config.getOperationTaxRate()
-                : DEFAULT_OPERATION_TAX_RATE;
-
-        // Calculate operation tax (minimum of $1 or percentage of revenue)
-        double operationTaxAmount = Math.max(1.0, grossRevenue * operationTaxRate);
+        double operationTaxRate = config.getStandardRate() != null
+                ? config.getStandardRate()
+                : DEFAULT_TAX_RATE;
+        double revenueTaxAmount = grossRevenue * operationTaxRate;
+        long activeContentCount = getActiveContentCountByPeriod(artistId, periodEnd);
+        double contentAccrualAmount = activeContentCount * MONTHLY_CONTENT_ACCRUAL;
+        double operationTaxAmount = revenueTaxAmount + contentAccrualAmount;
         double netRevenue = Math.max(0, grossRevenue - operationTaxAmount);
 
         // Count videos and shots in period for record
@@ -245,14 +254,16 @@ public class TaxService {
                 .paymentStatus(TaxRecord.PaymentStatus.PENDING)
                 .dueDate(periodEnd.plusDays(config.getPaymentDueDays()))
                 .filed(false)
-                .notes(String.format("Operation tax applied: %d videos in period, revenue below threshold", videoCount))
+                .notes(String.format(
+                        "Low-revenue monthly tax: revenue tax $%.2f + content accrual $%.2f (%d active uploads x $%.2f/month)",
+                        revenueTaxAmount, contentAccrualAmount, activeContentCount, MONTHLY_CONTENT_ACCRUAL))
                 // .metadata("{\"video_count\": " + videoCount + ", \"tax_type\":
                 // \"operation_tax\"}")
                 .build();
 
         record = taxRecordRepository.save(record);
-        log.info("Operation tax calculated: ${} on revenue ${} for {} videos",
-                operationTaxAmount, grossRevenue, videoCount);
+        log.info("Low-revenue tax calculated: ${} (revenue tax ${} + accrual ${}) on revenue ${}",
+                operationTaxAmount, revenueTaxAmount, contentAccrualAmount, grossRevenue);
 
         // Update compliance status
         updateComplianceStatus(artistId);
@@ -290,6 +301,57 @@ public class TaxService {
                     }
                 })
                 .toList();
+    }
+
+    @Transactional
+    public TaxCalculationResult recalculateTax(String artistId, String period) {
+        taxRecordRepository.deleteByArtistIdAndPeriod(artistId, period);
+        return calculateTax(artistId, period);
+    }
+
+    @Transactional
+    public List<TaxCalculationResult> recalculateArtistFromOnboarding(String artistId) {
+        Artist artist = artistRepository.findById(artistId)
+                .orElseThrow(() -> new IllegalArgumentException("Artist not found: " + artistId));
+
+        LocalDateTime authorizedAt = artist.getAuthorizedAt() != null ? artist.getAuthorizedAt() : LocalDateTime.now();
+        YearMonth startMonth = YearMonth.from(authorizedAt);
+        YearMonth currentMonth = YearMonth.now();
+
+        List<TaxCalculationResult> results = new java.util.ArrayList<>();
+        for (YearMonth month = startMonth; !month.isAfter(currentMonth); month = month.plusMonths(1)) {
+            String period = month.format(PERIOD_FORMATTER);
+            try {
+                results.add(recalculateTax(artistId, period));
+            } catch (Exception ex) {
+                results.add(TaxCalculationResult.builder()
+                        .artistId(artistId)
+                        .period(period)
+                        .success(false)
+                        .message("Recalculation failed: " + ex.getMessage())
+                        .build());
+            }
+        }
+
+        updateComplianceStatus(artistId);
+        return results;
+    }
+
+    @Transactional
+    public void recalculateAllArtistsFromOnboarding() {
+        List<Artist> artists = artistRepository.findAllByRole(com.example.taxbackend.user.Role.ARTIST);
+        log.info("Startup tax recalculation started for {} artists", artists.size());
+
+        artists.parallelStream().forEach(artist -> {
+            try {
+                List<TaxCalculationResult> artistResults = recalculateArtistFromOnboarding(artist.getId());
+                long failures = artistResults.stream().filter(r -> !r.isSuccess()).count();
+                log.info("Recalculated artist {} across {} periods (failures: {})",
+                        artist.getId(), artistResults.size(), failures);
+            } catch (Exception ex) {
+                log.error("Failed startup recalculation for artist {}: {}", artist.getId(), ex.getMessage());
+            }
+        });
     }
 
     /**
@@ -461,6 +523,14 @@ public class TaxService {
         return videoCount > 0;
     }
 
+    private boolean hasActiveContentByPeriod(String artistId, LocalDateTime periodEnd) {
+        return getActiveContentCountByPeriod(artistId, periodEnd) > 0;
+    }
+
+    private long getActiveContentCountByPeriod(String artistId, LocalDateTime periodEnd) {
+        return videoMetadataRepository.countByArtistIdAndPublishedAtLessThanEqual(artistId, periodEnd);
+    }
+
     /**
      * Count videos for artist in the specified period
      */
@@ -518,6 +588,8 @@ public class TaxService {
                 periodEnd);
         int videoCount = periodVideos.size();
         int shotCount = (int) periodVideos.stream().filter(v -> isShort(v.getDuration())).count();
+        long activeContentCount = getActiveContentCountByPeriod(artistId, periodEnd);
+        double contentAccrualAmount = activeContentCount * MONTHLY_CONTENT_ACCRUAL;
 
         return TaxRecord.builder()
                 .videoCount(videoCount)
@@ -528,8 +600,8 @@ public class TaxService {
                 .adsenseRevenue(adsenseRevenue)
                 .taxableIncome(0.0)
                 .taxRate(config.getStandardRate())
-                .taxAmount(0.0)
-                .netRevenue(grossRevenue)
+                .taxAmount(contentAccrualAmount)
+                .netRevenue(grossRevenue - contentAccrualAmount)
                 .deductions(0.0)
                 .period(period)
                 .periodStart(periodStart)
@@ -540,10 +612,14 @@ public class TaxService {
                 .calculatedBy("SYSTEM")
                 .calculationMethod("AUTOMATIC")
                 .taxType(TaxRecord.TaxType.STANDARD.toString())
-                .paymentStatus(TaxRecord.PaymentStatus.PAID) // Below threshold = auto-paid
-                .paidDate(LocalDateTime.now())
-                .filed(true)
-                .notes("Revenue below taxable threshold")
+                .paymentStatus(contentAccrualAmount > 0
+                        ? TaxRecord.PaymentStatus.PENDING
+                        : TaxRecord.PaymentStatus.PAID)
+                .paidDate(contentAccrualAmount > 0 ? null : LocalDateTime.now())
+                .filed(contentAccrualAmount <= 0)
+                .notes(String.format(
+                        "Below revenue threshold. Content accrual: $%.2f (%d active uploads x $%.2f/month)",
+                        contentAccrualAmount, activeContentCount, MONTHLY_CONTENT_ACCRUAL))
                 .build();
     }
 

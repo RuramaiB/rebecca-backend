@@ -27,6 +27,7 @@ import zw.co.paynow.responses.StatusResponse;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.List;
+import java.util.Objects;
 
 @Service
 @Slf4j
@@ -46,9 +47,16 @@ public class PayNowService {
         Artist artist = artistRepository.findByEmail(payNowRequest.getEmail())
                 .orElseThrow(() -> new IllegalArgumentException("Artist with email " + payNowRequest.getEmail() + " not found."));
         PayNowDetails payNowDetails = new PayNowDetails();
-//        ComplianceStatus complianceStatus = complianceStatusRepository.findById(payNowRequest.getComplianceID())
-//                        .orElseThrow(() -> new IllegalArgumentException("Compliance Record with ID " + payNowRequest.getComplianceID() + " not found."));
-//        payNowDetails.setComplianceStatus(complianceStatus);
+        if (payNowRequest.getComplianceID() == null || payNowRequest.getComplianceID().isBlank()) {
+            throw new IllegalArgumentException("Compliance ID is required");
+        }
+        ComplianceStatus complianceStatus = complianceStatusRepository.findById(payNowRequest.getComplianceID())
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Compliance record with ID " + payNowRequest.getComplianceID() + " not found."));
+        if (!Objects.equals(complianceStatus.getArtistId(), artist.getId())) {
+            throw new IllegalArgumentException("Compliance ID does not belong to this artist.");
+        }
+        payNowDetails.setComplianceStatus(complianceStatus);
         payNowDetails.setNarration(payNowRequest.getNarration());
         payNowDetails.setPaymentStatus(TaxRecord.PaymentStatus.PENDING);
         payNowDetails.setAmount(payNowRequest.getAmount());

@@ -17,6 +17,7 @@ public interface VideoMetadataRepository extends MongoRepository<Video, String> 
     List<Video> findByArtistIdAndPublishedAtBetween(String artistId, LocalDateTime start, LocalDateTime end);
 
     List<Video> findByArtistId(String artistId);
+    long countByArtistIdAndPublishedAtLessThanEqual(String artistId, LocalDateTime publishedAt);
 
     @Query("SELECT DISTINCT v.artistId FROM VideoMetadata v WHERE v.publishedDate BETWEEN :start AND :end")
     List<String> findDistinctArtistIdsByUploadDateBetween(@Param("start") LocalDateTime start,

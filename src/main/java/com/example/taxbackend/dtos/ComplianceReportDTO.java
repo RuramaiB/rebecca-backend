@@ -14,6 +14,7 @@ import java.util.List;
 @NoArgsConstructor
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class ComplianceReportDTO {
+    private String complianceStatusId;
     private String artistId;
     private String artistName;
     private String email;

@@ -14,6 +14,6 @@ public class PayNowRequest {
     private Double amount;
     private String method;
     private String narration;
-//    private String complianceID;
+    private String complianceID;
 
 }
