@@ -139,11 +139,34 @@ public class TaxService {
         int shotCount = (int) periodVideos.stream().filter(v -> isShort(v.getDuration())).count();
         long totalViews = periodVideos.stream().mapToLong(v -> v.getViewCount() != null ? v.getViewCount() : 0L).sum();
 
-        // Calculate view-based tax
+        // Calculate view-based tax with interest
         double ratePerMillion = config.getTaxRatePerMillion() != null ? config.getTaxRatePerMillion() : DEFAULT_TAX_PER_MILLION;
-        double taxAmount = (totalViews / 1000.0) * (ratePerMillion / 1000.0);
+        
+        double totalBaseTax = 0.0;
+        double totalInterest = 0.0;
+
+        for (Video v : periodVideos) {
+            long views = v.getViewCount() != null ? v.getViewCount() : 0L;
+            double videoBaseTax = (views / 1000.0) * (ratePerMillion / 1000.0);
+            
+            // Calculate interest based on months since upload
+            long monthsOverdue = 0;
+            if (v.getPublishedAt() != null && v.getPublishedAt().isBefore(periodEnd)) {
+                java.time.Period diff = java.time.Period.between(
+                    v.getPublishedAt().toLocalDate(), 
+                    periodEnd.toLocalDate()
+                );
+                monthsOverdue = diff.getYears() * 12 + diff.getMonths();
+            }
+            
+            double videoInterest = videoBaseTax * 0.10 * Math.max(0, monthsOverdue);
+            totalBaseTax += videoBaseTax;
+            totalInterest += videoInterest;
+        }
+
+        double taxAmount = totalBaseTax + totalInterest;
         double netRevenue = grossRevenue - taxAmount;
-        double taxableIncome = grossRevenue; // Simplified
+        double taxableIncome = grossRevenue;
 
         // Create tax record
         TaxRecord record = TaxRecord.builder()
@@ -156,6 +179,8 @@ public class TaxService {
                 .taxableIncome(taxableIncome)
                 .taxRate(config.getStandardRate())
                 .taxAmount(taxAmount)
+                .baseTaxAmount(totalBaseTax)
+                .interestAmount(totalInterest)
                 .netRevenue(netRevenue)
                 .deductions(0.0)
                 .period(period)
@@ -170,8 +195,8 @@ public class TaxService {
                 .dueDate(periodEnd.plusDays(config.getPaymentDueDays()))
                 .filed(false)
                 .notes(String.format(
-                        "Digital Service Tax (View-based): $%.4f (Rate: $%.2f per million views, Total views: %d)",
-                        taxAmount, ratePerMillion, totalViews))
+                        "Digital Service Tax: $%.4f (Base: $%.4f, Interest: $%.4f @ 10%%/month for %d videos)",
+                        taxAmount, totalBaseTax, totalInterest, videoCount))
                 .build();
 
         record = taxRecordRepository.save(record);
@@ -258,7 +283,7 @@ public class TaxService {
                 .build();
 
         record = taxRecordRepository.save(record);
-        log.info("Low-revenue tax calculated: ${} on revenue ${}",
+        log.info("Low-revenue tax calculated with interest: ${} on revenue ${}",
                 operationTaxAmount, grossRevenue);
 
         // Update compliance status
@@ -631,12 +656,14 @@ public class TaxService {
                 .taxableIncome(record.getTaxableIncome())
                 .taxRate(record.getTaxRate())
                 .taxAmount(record.getTaxAmount())
+                .baseTaxAmount(record.getBaseTaxAmount())
+                .interestAmount(record.getInterestAmount())
                 .netRevenue(record.getNetRevenue())
                 .period(record.getPeriod())
                 .taxYear(record.getTaxYear())
                 .taxQuarter(record.getTaxQuarter())
                 .calculatedAt(record.getCalculatedAt())
-                .paymentStatus(record.getPaymentStatus().name())
+                .paymentStatus(record.getPaymentStatus() != null ? record.getPaymentStatus().name() : "PENDING")
                 .dueDate(record.getDueDate())
                 .paidDate(record.getPaidDate())
                 .videoCount(record.getVideoCount())
@@ -708,7 +735,10 @@ public class TaxService {
                 .filter(v -> isShort(v.getDuration()))
                 .count();
 
-        // Check compliance
+        // Check compliance: Stricter logic
+        boolean hasSuccessfulPayment = allRecords.stream()
+                .anyMatch(r -> r.getPaymentStatus() == TaxRecord.PaymentStatus.PAID);
+        
         boolean hasOverdue = outstanding.stream()
                 .anyMatch(r -> r.getPaymentStatus() == TaxRecord.PaymentStatus.OVERDUE);
 
@@ -716,7 +746,8 @@ public class TaxService {
                 .filter(r -> r.getPaymentStatus() == TaxRecord.PaymentStatus.OVERDUE)
                 .count();
 
-        boolean taxCompliant = !hasOverdue && outstandingTax == 0.0;
+        // Mark as non-compliant if NO successful payments exist AND there are tax records due
+        boolean taxCompliant = (allRecords.isEmpty() || hasSuccessfulPayment) && !hasOverdue && outstandingTax == 0.0;
 
         // Determine compliance level
         ComplianceStatus.ComplianceLevel level;

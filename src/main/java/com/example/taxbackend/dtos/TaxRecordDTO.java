@@ -26,6 +26,8 @@ public class TaxRecordDTO {
     private Double taxableIncome;
     private Double taxRate;
     private Double taxAmount;
+    private Double baseTaxAmount;
+    private Double interestAmount;
     private Double netRevenue;
 
     private String period;

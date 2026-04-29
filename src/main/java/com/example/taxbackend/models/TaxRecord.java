@@ -44,7 +44,9 @@ public class TaxRecord {
     // Tax calculation
     private Double taxableIncome; // After deductions
     private Double taxRate; // Percentage (e.g., 0.10 for 10%)
-    private Double taxAmount; // Calculated tax
+    private Double taxAmount; // Total calculated tax (Base + Interest)
+    private Double baseTaxAmount; // Original tax before penalties
+    private Double interestAmount; // Accumulated interest penalty
     private Double netRevenue; // After tax
 
     // Content metrics for the period
