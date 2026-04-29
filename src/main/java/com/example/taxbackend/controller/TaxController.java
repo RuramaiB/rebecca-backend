@@ -203,4 +203,23 @@ public class TaxController {
                     .body(Map.of("error", "Failed to trigger calculation"));
         }
     }
+
+    /**
+     * Recalculate all tax records for all artists (system reset)
+     * POST /api/tax/recalculate-all
+     */
+    @PostMapping("/recalculate-all")
+    public ResponseEntity<?> recalculateAll() {
+        try {
+            log.info("Triggering global tax recalculation (reset)");
+            taxService.recalculateAllArtistsFromOnboarding();
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "message", "Global tax recalculation triggered successfully"));
+        } catch (Exception e) {
+            log.error("Error triggering global recalculation", e);
+            return ResponseEntity.internalServerError()
+                    .body(Map.of("error", "Failed to trigger global recalculation"));
+        }
+    }
 }

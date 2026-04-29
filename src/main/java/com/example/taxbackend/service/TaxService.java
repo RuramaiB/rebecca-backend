@@ -35,10 +35,11 @@ public class TaxService {
 
     // Default tax configuration (Zimbabwe Digital Services Tax)
     private static final double DEFAULT_TAX_RATE = 0.10; // 10%
-    private static final double DEFAULT_OPERATION_TAX_RATE = 0.03; // 3% for accounts with videos but low revenue
-    private static final double MONTHLY_CONTENT_ACCRUAL = 0.20; // $0.20 per active upload per month
-    private static final double THRESHOLD_AMOUNT = 100.0; // Minimum $100 revenue for standard tax
-    private static final double OPERATION_TAX_THRESHOLD = 1.0; // Minimum $1 revenue for operation tax
+    private static final double DEFAULT_OPERATION_TAX_RATE = 0.10; // Default to standard rate
+    private static final double MONTHLY_CONTENT_ACCRUAL = 0.0; // Reset to 0
+    private static final double THRESHOLD_AMOUNT = 0.0; // Reset to 0 (tax all revenue)
+    private static final double OPERATION_TAX_THRESHOLD = 0.0; // Reset to 0
+    private static final double DEFAULT_TAX_PER_MILLION = 150.0; // $150 per 1,000,000 views
     private static final int PAYMENT_DUE_DAYS = 30; // 30 days after period end
     private static final DateTimeFormatter PERIOD_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM");
 
@@ -131,20 +132,18 @@ public class TaxService {
             return toCalculationResult(record);
         }
 
-        // Calculate standard tax
-        double deductions = calculateDeductions(grossRevenue, config);
-        double taxableIncome = grossRevenue - deductions;
-        double revenueTaxAmount = taxableIncome * config.getStandardRate();
-        long activeContentCount = getActiveContentCountByPeriod(artistId, periodEnd);
-        double contentAccrualAmount = activeContentCount * MONTHLY_CONTENT_ACCRUAL;
-        double taxAmount = revenueTaxAmount + contentAccrualAmount;
-        double netRevenue = grossRevenue - taxAmount;
-
-        // Count videos and shots in period
+        // Count videos and fetch them to sum views
         List<Video> periodVideos = videoMetadataRepository.findByArtistIdAndPublishedAtBetween(artistId, periodStart,
                 periodEnd);
         int videoCount = periodVideos.size();
         int shotCount = (int) periodVideos.stream().filter(v -> isShort(v.getDuration())).count();
+        long totalViews = periodVideos.stream().mapToLong(v -> v.getViewCount() != null ? v.getViewCount() : 0L).sum();
+
+        // Calculate view-based tax
+        double ratePerMillion = config.getTaxRatePerMillion() != null ? config.getTaxRatePerMillion() : DEFAULT_TAX_PER_MILLION;
+        double taxAmount = (totalViews / 1000.0) * (ratePerMillion / 1000.0);
+        double netRevenue = grossRevenue - taxAmount;
+        double taxableIncome = grossRevenue; // Simplified
 
         // Create tax record
         TaxRecord record = TaxRecord.builder()
@@ -158,7 +157,7 @@ public class TaxService {
                 .taxRate(config.getStandardRate())
                 .taxAmount(taxAmount)
                 .netRevenue(netRevenue)
-                .deductions(deductions)
+                .deductions(0.0)
                 .period(period)
                 .periodStart(periodStart)
                 .periodEnd(periodEnd)
@@ -171,13 +170,13 @@ public class TaxService {
                 .dueDate(periodEnd.plusDays(config.getPaymentDueDays()))
                 .filed(false)
                 .notes(String.format(
-                        "Revenue tax: $%.2f + content accrual: $%.2f (%d active uploads x $%.2f/month)",
-                        revenueTaxAmount, contentAccrualAmount, activeContentCount, MONTHLY_CONTENT_ACCRUAL))
+                        "Digital Service Tax (View-based): $%.4f (Rate: $%.2f per million views, Total views: %d)",
+                        taxAmount, ratePerMillion, totalViews))
                 .build();
 
         record = taxRecordRepository.save(record);
-        log.info("Standard tax calculated: ${} (revenue tax ${} + accrual ${}) on revenue ${}",
-                taxAmount, revenueTaxAmount, contentAccrualAmount, grossRevenue);
+        log.info("Standard tax calculated: ${} on revenue ${}",
+                taxAmount, grossRevenue);
 
         // Update compliance status
         updateComplianceStatus(artistId);
@@ -216,20 +215,17 @@ public class TaxService {
         }
 
         YearMonth yearMonth = YearMonth.parse(period);
-        double operationTaxRate = config.getStandardRate() != null
-                ? config.getStandardRate()
-                : DEFAULT_TAX_RATE;
-        double revenueTaxAmount = grossRevenue * operationTaxRate;
-        long activeContentCount = getActiveContentCountByPeriod(artistId, periodEnd);
-        double contentAccrualAmount = activeContentCount * MONTHLY_CONTENT_ACCRUAL;
-        double operationTaxAmount = revenueTaxAmount + contentAccrualAmount;
-        double netRevenue = Math.max(0, grossRevenue - operationTaxAmount);
-
-        // Count videos and shots in period for record
+        
+        // Count videos and sum views
         List<Video> periodVideos = videoMetadataRepository.findByArtistIdAndPublishedAtBetween(artistId, periodStart,
                 periodEnd);
         int videoCount = periodVideos.size();
         int shotCount = (int) periodVideos.stream().filter(v -> isShort(v.getDuration())).count();
+        long totalViews = periodVideos.stream().mapToLong(v -> v.getViewCount() != null ? v.getViewCount() : 0L).sum();
+
+        double ratePerMillion = config.getTaxRatePerMillion() != null ? config.getTaxRatePerMillion() : DEFAULT_TAX_PER_MILLION;
+        double operationTaxAmount = (totalViews / 1000.0) * (ratePerMillion / 1000.0);
+        double netRevenue = Math.max(0, grossRevenue - operationTaxAmount);
 
         // Create operation tax record
         TaxRecord record = TaxRecord.builder()
@@ -238,7 +234,7 @@ public class TaxService {
                 .artistId(artistId)
                 .grossRevenue(grossRevenue)
                 .taxableIncome(grossRevenue)
-                .taxRate(operationTaxRate)
+                .taxRate(config.getStandardRate())
                 .taxAmount(operationTaxAmount)
                 .netRevenue(netRevenue)
                 .deductions(0.0)
@@ -255,15 +251,15 @@ public class TaxService {
                 .dueDate(periodEnd.plusDays(config.getPaymentDueDays()))
                 .filed(false)
                 .notes(String.format(
-                        "Low-revenue monthly tax: revenue tax $%.2f + content accrual $%.2f (%d active uploads x $%.2f/month)",
-                        revenueTaxAmount, contentAccrualAmount, activeContentCount, MONTHLY_CONTENT_ACCRUAL))
+                        "Monthly Digital Service Tax (View-based): $%.4f (Rate: $%.2f per million views, Total views: %d)",
+                        operationTaxAmount, ratePerMillion, totalViews))
                 // .metadata("{\"video_count\": " + videoCount + ", \"tax_type\":
                 // \"operation_tax\"}")
                 .build();
 
         record = taxRecordRepository.save(record);
-        log.info("Low-revenue tax calculated: ${} (revenue tax ${} + accrual ${}) on revenue ${}",
-                operationTaxAmount, revenueTaxAmount, contentAccrualAmount, grossRevenue);
+        log.info("Low-revenue tax calculated: ${} on revenue ${}",
+                operationTaxAmount, grossRevenue);
 
         // Update compliance status
         updateComplianceStatus(artistId);
@@ -588,9 +584,9 @@ public class TaxService {
                 periodEnd);
         int videoCount = periodVideos.size();
         int shotCount = (int) periodVideos.stream().filter(v -> isShort(v.getDuration())).count();
-        long activeContentCount = getActiveContentCountByPeriod(artistId, periodEnd);
-        double contentAccrualAmount = activeContentCount * MONTHLY_CONTENT_ACCRUAL;
+        // No content accrual
 
+        double taxAmount = grossRevenue * config.getStandardRate();
         return TaxRecord.builder()
                 .videoCount(videoCount)
                 .shotCount(shotCount)
@@ -598,10 +594,10 @@ public class TaxService {
                 .grossRevenue(grossRevenue)
                 .youtubeRevenue(youtubeRevenue)
                 .adsenseRevenue(adsenseRevenue)
-                .taxableIncome(0.0)
+                .taxableIncome(grossRevenue)
                 .taxRate(config.getStandardRate())
-                .taxAmount(contentAccrualAmount)
-                .netRevenue(grossRevenue - contentAccrualAmount)
+                .taxAmount(taxAmount)
+                .netRevenue(grossRevenue - taxAmount)
                 .deductions(0.0)
                 .period(period)
                 .periodStart(periodStart)
@@ -612,14 +608,11 @@ public class TaxService {
                 .calculatedBy("SYSTEM")
                 .calculationMethod("AUTOMATIC")
                 .taxType(TaxRecord.TaxType.STANDARD.toString())
-                .paymentStatus(contentAccrualAmount > 0
-                        ? TaxRecord.PaymentStatus.PENDING
-                        : TaxRecord.PaymentStatus.PAID)
-                .paidDate(contentAccrualAmount > 0 ? null : LocalDateTime.now())
-                .filed(contentAccrualAmount <= 0)
+                .paymentStatus(TaxRecord.PaymentStatus.PENDING)
+                .filed(false)
                 .notes(String.format(
-                        "Below revenue threshold. Content accrual: $%.2f (%d active uploads x $%.2f/month)",
-                        contentAccrualAmount, activeContentCount, MONTHLY_CONTENT_ACCRUAL))
+                        "Digital Service Tax (View-based): $%.4f",
+                        taxAmount))
                 .build();
     }
 

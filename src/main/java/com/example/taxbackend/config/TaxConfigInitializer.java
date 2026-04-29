@@ -41,9 +41,10 @@ public class TaxConfigInitializer {
                     .country("Zimbabwe")
                     .taxType("DIGITAL_SERVICES_TAX")
                     // Tax rates
-                    .standardRate(0.10)         // 10% standard rate
+                    .standardRate(1.0)         // 100% since we use fixed fee now
+                    .taxRatePerMillion(150.0)  // $150 per 1,000,000 views
                     .reducedRate(0.05)          // 5% for small earners (not currently used)
-                    .thresholdAmount(100.0)     // Minimum $100 revenue to be taxed
+                    .thresholdAmount(0.0)     // Minimum $0 revenue to be taxed
                     // Deductions
                     .allowDeductions(true)
                     .standardDeduction(0.0)     // No standard deduction currently

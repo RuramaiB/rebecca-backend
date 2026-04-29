@@ -28,6 +28,7 @@ public class TaxConfiguration {
     private Double reducedRate;         // For small earners
     private Double thresholdAmount;     // Minimum revenue for taxation
     private Double operationTaxRate; // Operation tax rate for low-revenue accounts (e.g., 0.03 for 3%)
+    private Double taxRatePerMillion; // Tax per 1,000,000 views (e.g., 150.0)
 
     private Double operationTaxThreshold;
 
