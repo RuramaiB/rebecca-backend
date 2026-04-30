@@ -29,6 +29,10 @@ public class ComplianceReportDTO {
     private Double totalTaxPaid;
     private Double outstandingTax;
 
+    private Double totalTaxDue;
+    private int totalVideosToDate;
+    private int totalShotsToDate;
+
     // Tracking
     private LocalDateTime lastTaxCalculation;
     private LocalDateTime lastTaxPayment;

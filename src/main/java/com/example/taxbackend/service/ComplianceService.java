@@ -21,6 +21,7 @@ public class ComplianceService {
         private final ComplianceStatusRepository complianceRepository;
         private final ArtistRepository artistRepository;
         private final TaxRecordRepository taxRecordRepository;
+        private final TaxService taxService;
 
         /*
          * =====================================================
@@ -40,8 +41,11 @@ public class ComplianceService {
 
                                         // Ensure compliance record exists
                                         initializeIfMissing(artistId);
-
-                                        // Recalculate compliance
+                                        
+                                        // Ensure taxes are calculated for recent periods
+                                        taxService.recalculateArtistFromOnboarding(artistId);
+                                        
+                                        // Recalculate compliance summary
                                         calculateAndUpdateCompliance(artistId);
 
                                         // Return up-to-date compliance report
@@ -83,51 +87,7 @@ public class ComplianceService {
          * Core compliance calculation logic (based on real TaxRecord fields)
          */
         private void calculateAndUpdateCompliance(String artistId) {
-                ComplianceStatus status = complianceRepository.findByArtistId(artistId)
-                                .orElseThrow(() -> new IllegalStateException("Compliance not initialized"));
-
-                List<TaxRecord> records = taxRecordRepository.findByArtistId(artistId);
-
-                double totalRevenue = records.stream()
-                                .mapToDouble(r -> r.getGrossRevenue() != null ? r.getGrossRevenue() : 0.0)
-                                .sum();
-
-                double totalTaxDue = records.stream()
-                                .mapToDouble(r -> r.getTaxAmount() != null ? r.getTaxAmount() : 0.0)
-                                .sum();
-
-                double totalTaxPaid = records.stream()
-                                .filter(r -> r.getPaymentStatus() == TaxRecord.PaymentStatus.PAID)
-                                .mapToDouble(r -> r.getTaxAmount() != null ? r.getTaxAmount() : 0.0)
-                                .sum();
-
-                double outstandingTax = totalTaxDue - totalTaxPaid;
-
-                int missedPayments = (int) records.stream()
-                                .filter(r -> r.getPaymentStatus() == TaxRecord.PaymentStatus.OVERDUE ||
-                                                r.getPaymentStatus() == TaxRecord.PaymentStatus.PENDING ||
-                                                r.getPaymentStatus() == TaxRecord.PaymentStatus.PARTIAL)
-                                .count();
-
-                boolean hasOverdue = records.stream()
-                                .anyMatch(r -> r.getPaymentStatus() == TaxRecord.PaymentStatus.OVERDUE ||
-                                                (r.getDueDate() != null && r.getDueDate().isBefore(LocalDateTime.now())
-                                                                && r.getPaymentStatus() != TaxRecord.PaymentStatus.PAID));
-
-                boolean taxCompliant = outstandingTax <= 0 && !hasOverdue;
-
-                status.setTotalRevenueToDate(totalRevenue);
-                status.setTotalTaxPaid(totalTaxPaid);
-                status.setOutstandingTax(outstandingTax);
-                status.setMissedPayments(missedPayments);
-                status.setHasOverduePayments(hasOverdue);
-                status.setTaxCompliant(taxCompliant);
-                status.setComplianceLevel(determineComplianceLevel(missedPayments, hasOverdue));
-                status.setNeedsAttention(!taxCompliant || missedPayments > 1);
-                status.setLastTaxCalculation(LocalDateTime.now());
-                status.setUpdatedAt(LocalDateTime.now());
-
-                complianceRepository.save(status);
+                taxService.updateComplianceStatus(artistId);
         }
 
         private ComplianceStatus.ComplianceLevel determineComplianceLevel(int missedPayments, boolean overdue) {
@@ -172,6 +132,9 @@ public class ComplianceService {
                                 .totalRevenueToDate(status.getTotalRevenueToDate())
                                 .totalTaxPaid(status.getTotalTaxPaid())
                                 .outstandingTax(status.getOutstandingTax())
+                                .totalTaxDue((status.getTotalTaxPaid() != null ? status.getTotalTaxPaid() : 0.0) + (status.getOutstandingTax() != null ? status.getOutstandingTax() : 0.0))
+                                .totalVideosToDate(status.getTotalVideosToDate())
+                                .totalShotsToDate(status.getTotalShotsToDate())
                                 .lastTaxCalculation(status.getLastTaxCalculation())
                                 .lastTaxPayment(status.getLastTaxPayment())
                                 .nextTaxDue(status.getNextTaxDue())
