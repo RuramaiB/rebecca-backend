@@ -135,8 +135,9 @@ public class TaxService {
         // Count videos and fetch them to sum views
         List<Video> periodVideos = videoMetadataRepository.findByArtistIdAndPublishedAtBetween(artistId, periodStart,
                 periodEnd);
-        int videoCount = periodVideos.size();
+        int totalContent = periodVideos.size();
         int shotCount = (int) periodVideos.stream().filter(v -> isShort(v.getDuration())).count();
+        int videoCount = totalContent - shotCount;
         long totalViews = periodVideos.stream().mapToLong(v -> v.getViewCount() != null ? v.getViewCount() : 0L).sum();
 
         // Calculate view-based tax with interest
@@ -244,8 +245,9 @@ public class TaxService {
         // Count videos and sum views
         List<Video> periodVideos = videoMetadataRepository.findByArtistIdAndPublishedAtBetween(artistId, periodStart,
                 periodEnd);
-        int videoCount = periodVideos.size();
+        int totalContent = periodVideos.size();
         int shotCount = (int) periodVideos.stream().filter(v -> isShort(v.getDuration())).count();
+        int videoCount = totalContent - shotCount;
         long totalViews = periodVideos.stream().mapToLong(v -> v.getViewCount() != null ? v.getViewCount() : 0L).sum();
 
         double ratePerMillion = config.getTaxRatePerMillion() != null ? config.getTaxRatePerMillion() : DEFAULT_TAX_PER_MILLION;
@@ -404,8 +406,8 @@ public class TaxService {
         LocalDateTime periodEnd = yearMonth.atEndOfMonth().atTime(23, 59, 59);
 
         // Get all artists with videos in the period
-        List<String> artistIdsWithVideos = videoMetadataRepository.findDistinctArtistIdsByUploadDateBetween(
-                periodStart, periodEnd);
+        // Use the new generic method to get all artists with activity
+        List<String> artistIdsWithVideos = videoMetadataRepository.findDistinctArtistIds();
 
         log.info("Found {} artists with videos in period {}", artistIdsWithVideos.size(), period);
 
@@ -619,8 +621,9 @@ public class TaxService {
         // Count videos and shots in period
         List<Video> periodVideos = videoMetadataRepository.findByArtistIdAndPublishedAtBetween(artistId, periodStart,
                 periodEnd);
-        int videoCount = periodVideos.size();
+        int totalContent = periodVideos.size();
         int shotCount = (int) periodVideos.stream().filter(v -> isShort(v.getDuration())).count();
+        int videoCount = totalContent - shotCount;
         // No content accrual
 
         double taxAmount = grossRevenue * config.getStandardRate();
@@ -742,10 +745,11 @@ public class TaxService {
 
         // Calculate video/shot metrics
         List<Video> allVideos = videoMetadataRepository.findByArtistId(artistId);
-        int totalVideos = allVideos.size();
+        int totalContent = allVideos.size();
         int totalShots = (int) allVideos.stream()
                 .filter(v -> isShort(v.getDuration()))
                 .count();
+        int totalVideos = totalContent - totalShots;
 
         // Check compliance: Stricter logic
         boolean hasSuccessfulPayment = allRecords.stream()
@@ -800,7 +804,7 @@ public class TaxService {
         if (duration == null || duration.isEmpty())
             return false;
         try {
-            // Simple parsing for common YouTube durations: PT#S, PT#M#S, PT#M
+            // ISO 8601 duration: PT#H#M#S
             if (duration.contains("H"))
                 return false;
 
@@ -810,9 +814,9 @@ public class TaxService {
                 String minutesStr = duration.substring(pIndex + 1, mIndex);
                 int minutes = Integer.parseInt(minutesStr);
 
-                if (minutes >= 1) {
-                    if (minutes > 1)
-                        return false;
+                if (minutes > 1) return false;
+                if (minutes == 1) {
+                    // Exactly 1 minute (60s) is the limit for Shorts
                     if (duration.contains("S")) {
                         String secondsStr = duration.substring(mIndex + 1, duration.indexOf("S"));
                         return Integer.parseInt(secondsStr) == 0;
@@ -820,6 +824,7 @@ public class TaxService {
                     return true;
                 }
             }
+            // If it doesn't have H or M > 1, and it's PT...S or PT1M, it's a short
             return true;
         } catch (Exception e) {
             return false;
