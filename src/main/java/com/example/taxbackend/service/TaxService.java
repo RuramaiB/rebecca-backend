@@ -335,8 +335,20 @@ public class TaxService {
         Artist artist = artistRepository.findById(artistId)
                 .orElseThrow(() -> new IllegalArgumentException("Artist not found: " + artistId));
 
-        LocalDateTime authorizedAt = artist.getAuthorizedAt() != null ? artist.getAuthorizedAt() : LocalDateTime.now();
-        YearMonth startMonth = YearMonth.from(authorizedAt);
+        LocalDateTime startDate = artist.getAuthorizedAt() != null ? artist.getAuthorizedAt() : LocalDateTime.now();
+
+        // Consider YouTube channel creation date if available
+        if (artist.getYoutubeChannelPublishedAt() != null && artist.getYoutubeChannelPublishedAt().isBefore(startDate)) {
+            startDate = artist.getYoutubeChannelPublishedAt();
+        }
+
+        // Consider first video upload date
+        Optional<Video> firstVideo = videoMetadataRepository.findFirstByArtistIdOrderByPublishedAtAsc(artistId);
+        if (firstVideo.isPresent() && firstVideo.get().getPublishedAt().isBefore(startDate)) {
+            startDate = firstVideo.get().getPublishedAt();
+        }
+
+        YearMonth startMonth = YearMonth.from(startDate);
         YearMonth currentMonth = YearMonth.now();
 
         List<TaxCalculationResult> results = new java.util.ArrayList<>();

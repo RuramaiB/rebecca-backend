@@ -22,4 +22,6 @@ public interface VideoMetadataRepository extends MongoRepository<Video, String> 
     @Query("SELECT DISTINCT v.artistId FROM VideoMetadata v WHERE v.publishedDate BETWEEN :start AND :end")
     List<String> findDistinctArtistIdsByUploadDateBetween(@Param("start") LocalDateTime start,
             @Param("end") LocalDateTime end);
+
+    java.util.Optional<Video> findFirstByArtistIdOrderByPublishedAtAsc(String artistId);
 }

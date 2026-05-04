@@ -123,6 +123,15 @@ public class OAuthService {
                 artist = existingArtist.get();
                 artist.setAuthStatus(AuthStatus.AUTHENTICATED);
                 artist.setLastSyncedAt(LocalDateTime.now());
+
+                // Update channel info if missing or on every login to keep it fresh
+                YouTubeChannelInfo channelInfo = fetchYouTubeChannelInfo(response.getAccessToken());
+                if (channelInfo.getChannelId() != null) {
+                    artist.setYoutubeChannelId(channelInfo.getChannelId());
+                    artist.setYoutubeChannelTitle(channelInfo.getChannelTitle());
+                    artist.setYoutubeChannelPublishedAt(channelInfo.getChannelPublishedAt());
+                }
+
                 isNewArtist = false;
 
             } else {
@@ -135,6 +144,7 @@ public class OAuthService {
                         .name(name)
                         .youtubeChannelId(channelInfo.getChannelId())
                         .youtubeChannelTitle(channelInfo.getChannelTitle())
+                        .youtubeChannelPublishedAt(channelInfo.getChannelPublishedAt())
                         .authorizedAt(LocalDateTime.now())
                         .lastSyncedAt(LocalDateTime.now())
                         .youtubeAuthorized(true)
@@ -216,6 +226,9 @@ public class OAuthService {
                 return YouTubeChannelInfo.builder()
                         .channelId(channelId)
                         .channelTitle(channelTitle)
+                        .channelPublishedAt(java.time.LocalDateTime.ofInstant(
+                                java.time.Instant.ofEpochMilli(channel.getSnippet().getPublishedAt().getValue()),
+                                java.time.ZoneId.systemDefault()))
                         .build();
             } else {
                 log.warn("No YouTube channel found for user");
@@ -422,6 +435,7 @@ public class OAuthService {
     private static class YouTubeChannelInfo {
         private String channelId;
         private String channelTitle;
+        private java.time.LocalDateTime channelPublishedAt;
     }
 
     /**

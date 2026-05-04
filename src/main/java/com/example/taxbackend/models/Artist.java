@@ -33,6 +33,7 @@ public class Artist {
     private String adsenseAccountId; // May be null if not linked
 
     private LocalDateTime authorizedAt;
+    private LocalDateTime youtubeChannelPublishedAt;
     private LocalDateTime lastSyncedAt;
 
     // OAuth tokens stored securely

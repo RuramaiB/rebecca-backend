@@ -231,9 +231,15 @@ public class RiskAnalysisService {
         List<TaxRecord> taxRecords = taxRecordRepository.findByArtistId(artistId);
         int recalcCount = taxRecords.size();
 
-        // Calculate days since registration
-        long daysSinceReg = ChronoUnit.DAYS.between(
-                artist.getAuthorizedAt(), LocalDateTime.now());
+        LocalDateTime startDate = artist.getAuthorizedAt() != null ? artist.getAuthorizedAt() : LocalDateTime.now();
+        if (artist.getYoutubeChannelPublishedAt() != null && artist.getYoutubeChannelPublishedAt().isBefore(startDate)) {
+            startDate = artist.getYoutubeChannelPublishedAt();
+        }
+        
+        // Use TaxRecordRepository or VideoMetadataRepository to find first activity if needed
+        // For simplicity here, we use authorizedAt or channel date
+        
+        long daysSinceReg = ChronoUnit.DAYS.between(startDate, LocalDateTime.now());
 
         return ArtistRiskInputDTO.builder()
                 .artistId(artistId)
